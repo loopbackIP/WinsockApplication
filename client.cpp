@@ -19,9 +19,11 @@ int main(int argc, char **argv) {
     WSADATA wsaData;
     using Socket = SOCKET;
     Socket ConnectSocket = INVALID_SOCKET;
-    struct addinfo *result = nullptr,
-                    *ptr = nullptr,
-                    *hints;
+
+    struct addrinfo *result = nullptr;
+    struct addrinfo *ptr = nullptr;
+    struct addrinfo *hints;
+
     const char *sendbuf = "this is a test";
     char recvbuf[DEFAULT_BUFLEN];
     int iResult;
@@ -73,4 +75,51 @@ int main(int argc, char **argv) {
         }
         break;
     }
+
+    freeaddrinfo(result);
+
+    if (ConnectSocket == INVALID_SOCKET) {
+        std::cout << "connect failed with error: " << WSAGetLastError() << std::endl;
+        WSACleanup();
+        return 1;
+    }
+
+    // Send an initial buffer
+    iResult = send( ConnectSocket, sendbuf, (int)strlen(sendbuf), 0 );
+    if (iResult == SOCKET_ERROR) {
+        std::cerr << "send failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(ConnectSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    std::cout << "Bytes Sent: " << iResult << "\n";
+
+    // shutdown the connection since no more data will be sent
+    iResult = shutdown(ConnectSocket, SD_SEND);
+    if (iResult == SOCKET_ERROR) {
+        std::cerr << "shutdown failed with error: " << WSAGetLastError() << std::endl;
+        closesocket(ConnectSocket);
+        WSACleanup();
+        return 1;
+    }
+
+    // Receive until the peer closes the connection
+    do {
+
+        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+        if ( iResult > 0 )
+            std::cout << "Bytes received: " << iResult << "\n";
+        else if ( iResult == 0 )
+            std::cout << "Connection closed" << "\n";
+        else
+            std::cerr << "recv failed with error: " << WSAGetLastError() << std::endl;
+
+    } while( iResult > 0 );
+
+    // cleanup
+    closesocket(ConnectSocket);
+    WSACleanup();
+
+    return 0;
 }
