@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
 
     struct addrinfo *result = nullptr;
     struct addrinfo *ptr = nullptr;
-    struct addrinfo *hints;
+    struct addrinfo hints{}; // value initialization
 
     const char *sendbuf = "this is a test";
     char recvbuf[DEFAULT_BUFLEN];
@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
 
     // Validate the parameters
     if (argc != 2) {
-        std::cout << "usage: " << argv[0] << " <port>\n";
+        std::cout << "usage: " << argv[0] << " <hostname>\n";
         return 1;
     }
 
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    ZeroMemory( &hints, sizeof(hints) );
+    ZeroMemory( &hints, sizeof(hints) ); // 주소 전달
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    for(ptr=result; ptr != NULL ;ptr=ptr->ai_next) {
+    for(ptr=result; ptr != nullptr ;ptr=ptr->ai_next) {
 
         // Create a SOCKET for connecting to server
         ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
@@ -106,7 +106,6 @@ int main(int argc, char **argv) {
 
     // Receive until the peer closes the connection
     do {
-
         iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
         if ( iResult > 0 )
             std::cout << "Bytes received: " << iResult << "\n";

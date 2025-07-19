@@ -20,7 +20,7 @@ int main() {
     Socket ClientSocket = INVALID_SOCKET;
 
     struct addrinfo *result = nullptr;
-    struct addrinfo hints;
+    struct addrinfo hints{};
 
     int iSendResult;
     char recvbuf[DEFAULT_BUFLEN];
@@ -32,7 +32,7 @@ int main() {
         return 1;
     }
 
-    std::cout << "Server started. Waiting for client connection on port" << DEFAULT_PORT << "...\n";
+    std::cout << "Server started. Waiting for client connection on port " << DEFAULT_PORT << "...\n";
 
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
