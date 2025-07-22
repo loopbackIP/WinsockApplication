@@ -6,6 +6,8 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <iostream>
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -15,24 +17,37 @@
 
 int main() {
     WSADATA wsaData;
-    using Socket = SOCKET;
-    Socket ListenSocket = INVALID_SOCKET;
-    Socket ClientSocket = INVALID_SOCKET;
-
-    struct addrinfo *result = nullptr;
-    struct addrinfo hints{};
 
     int iSendResult;
-    char recvbuf[DEFAULT_BUFLEN];
-    int recvbuflen = DEFAULT_BUFLEN;
+    // int recvbuflen = DEFAULT_BUFLEN;
 
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
-        std::cerr << "WSAStartup failed with error: " << iResult << std::endl;
+        std::cerr << "WSAStartup failed: " << iResult << std::endl;
         return 1;
     }
 
-    std::cout << "Server started. Waiting for client connection on port " << DEFAULT_PORT << "...\n";
+    SSL_library_init();
+    SSL_load_error_strings();
+
+    const SSL_METHOD *method = TLS_client_method();
+    SSL_CTX* ctx = SSL_CTX_new(method);
+    if (!ctx) {
+        std::cerr << "Unable to create SSL context\n";
+        ERR_print_errors_fp(stderr);
+        return 1;
+    }
+
+    if (SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0 ||
+        SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0) {
+        std::cerr << "Unable to load certificate and private key files\n";
+        SSL_CTX_free(ctx);
+    }
+
+    SOCKET ListenSocket = INVALID_SOCKET;
+    SOCKET ClientSocket = INVALID_SOCKET;
+    struct addrinfo* result = nullptr;
+    struct addrinfo hints{};
 
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -40,93 +55,95 @@ int main() {
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE;
 
-    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
+    iResult = getaddrinfo(nullptr, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
-        std::cerr << "getaddrinfo failed with error: " << iResult << std::endl;
+        std::cerr << "getaddrinfo failed: " << iResult << std::endl;
         WSACleanup();
+        SSL_CTX_free(ctx);
         return 1;
     }
 
     // Create a SOCKET for the server to listen for client connections.
     ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
     if (ListenSocket == INVALID_SOCKET) {
-        std::cerr << "socket failed with error: " << WSAGetLastError() << std::endl;
+        std::cerr << "socket failed: " << WSAGetLastError() << std::endl;
         freeaddrinfo(result);
         WSACleanup();
+        SSL_CTX_free(ctx);
         return 1;
     }
 
     // Set up the TCP listening socket
     iResult = bind( ListenSocket, result->ai_addr, static_cast<int>(result->ai_addrlen));
+    freeaddrinfo(result);
     if (iResult == SOCKET_ERROR) {
-        std::cerr << "bind failed with error: " << WSAGetLastError() << std::endl;
-        freeaddrinfo(result);
+        std::cerr << "bind failed: " << WSAGetLastError() << std::endl;
+        // freeaddrinfo(result);
         closesocket(ListenSocket);
         WSACleanup();
+        SSL_CTX_free(ctx);
         return 1;
     }
-
-    freeaddrinfo(result);
 
     iResult = listen(ListenSocket, SOMAXCONN);
     if (iResult == SOCKET_ERROR) {
-        std::cerr << "listen failed with error: " << WSAGetLastError() << std::endl;
+        std::cerr << "listen failed: " << WSAGetLastError() << std::endl;
         closesocket(ListenSocket);
         WSACleanup();
+        SSL_CTX_free(ctx);
         return 1;
     }
+
+    std::cout << "Server started. Waiting for TLS connection on port " << DEFAULT_PORT << "...\n";
 
     // Accept a client socket
     ClientSocket = accept(ListenSocket, nullptr, nullptr);
     if (ClientSocket == INVALID_SOCKET) {
-        std::cerr << "accept failed with error: " << WSAGetLastError() << std::endl;
+        std::cerr << "accept failed: " << WSAGetLastError() << std::endl;
         closesocket(ListenSocket);
         WSACleanup();
+        SSL_CTX_free(ctx);
         return 1;
     }
 
     // No longer need server socket
     closesocket(ListenSocket);
 
-    // Receive until the peer shuts down the connection
-    do {
+    // TLS 연결 설정
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, static_cast<int>(ClientSocket));
 
-        iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
-        if (iResult > 0) {
-            std::cout << "Bytes received: " << iResult << "\n";
-
-        // Echo the buffer back to the sender
-            iSendResult = send( ClientSocket, recvbuf, iResult, 0 );
-            if (iSendResult == SOCKET_ERROR) {
-                std::cerr << "send failed with error: " << WSAGetLastError() << std::endl;
-                closesocket(ClientSocket);
-                WSACleanup();
-                return 1;
-            }
-            std::cout << "Bytes sent: " << iSendResult << "\n";
-        }
-        else if (iResult == 0)
-            std::cout << "Connection closing..." << "\n";
-        else  {
-            std::cerr << "recv failed with error: " << WSAGetLastError() << std::endl;
-            closesocket(ClientSocket);
-            WSACleanup();
-            return 1;
-        }
-
-    } while (iResult > 0);
-
-    // shutdown the connection since we're done
-    iResult = shutdown(ClientSocket, SD_SEND);
-    if (iResult == SOCKET_ERROR) {
-        std::cerr << "shutdown failed with error: " << WSAGetLastError() << std::endl;
+    if (SSL_accept(ssl) <= 0) {
+        std::cerr << "SSL_accept failed: " << WSAGetLastError() << std::endl;
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
         closesocket(ClientSocket);
         WSACleanup();
+        SSL_CTX_free(ctx);
         return 1;
     }
 
+    std::cout << "TLS handshake successful!\n";
+
+    char recvbuf[DEFAULT_BUFLEN];
+    int bytesRead;
+
+    while ((bytesRead = SSL_read(ssl, recvbuf, DEFAULT_BUFLEN)) > 0) {
+        std::cout << "Received: " << std::string(recvbuf, bytesRead) << "\n";
+
+        const int bytesSent = SSL_write(ssl, recvbuf, bytesRead);
+        if (bytesSent != bytesRead) {
+            std::cerr << "SSL_write failed: " << WSAGetLastError() << std::endl;
+            break;
+        }
+    }
+
+
     // cleanup
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
     closesocket(ClientSocket);
+    SSL_CTX_free(ctx);
     WSACleanup();
 
     return 0;
