@@ -5,6 +5,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iostream>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
@@ -16,24 +18,21 @@
 
 
 int main(int argc, char **argv) {
-    WSADATA wsaData;
-    using Socket = SOCKET;
-    Socket ConnectSocket = INVALID_SOCKET;
-
-    struct addrinfo *result = nullptr;
-    struct addrinfo *ptr = nullptr;
-    struct addrinfo hints{}; // value initialization
-
-    const char *sendbuf = "this is a test";
-    char recvbuf[DEFAULT_BUFLEN];
-    int iResult;
-    int recvbuflen = DEFAULT_BUFLEN;
-
     // Validate the parameters
     if (argc != 2) {
         std::cout << "usage: " << argv[0] << " <hostname>\n";
         return 1;
     }
+
+    WSADATA wsaData;
+    SOCKET ConnectSocket = INVALID_SOCKET;
+    // value initialization
+    struct addrinfo hints{}, * result = nullptr, * ptr = nullptr;
+
+    const char *sendbuf = "this is a test";
+    char recvbuf[DEFAULT_BUFLEN];
+    int iResult;
+
 
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -42,7 +41,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    ZeroMemory( &hints, sizeof(hints) ); // 주소 전달
+    // OpenSSL init
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+
+    // address setting
+    ZeroMemory( &hints, sizeof(hints) );
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
@@ -55,11 +60,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    for(ptr=result; ptr != nullptr ;ptr=ptr->ai_next) {
-
+    // Connection try
+    for(ptr = result; ptr != nullptr ;ptr = ptr->ai_next) {
         // Create a SOCKET for connecting to server
-        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
-            ptr->ai_protocol);
+        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
         if (ConnectSocket == INVALID_SOCKET) {
             std::cerr << "socket failed with error: " << WSAGetLastError() << std::endl;
             WSACleanup();
@@ -67,7 +71,7 @@ int main(int argc, char **argv) {
         }
 
         // Connect to server.
-        iResult = connect( ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
+        iResult = connect(ConnectSocket, ptr->ai_addr, static_cast<int>(ptr->ai_addrlen));
         if (iResult == SOCKET_ERROR) {
             closesocket(ConnectSocket);
             ConnectSocket = INVALID_SOCKET;
@@ -75,7 +79,6 @@ int main(int argc, char **argv) {
         }
         break;
     }
-
     freeaddrinfo(result);
 
     if (ConnectSocket == INVALID_SOCKET) {
@@ -93,30 +96,32 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::cout << "Bytes Sent: " << iResult << "\n";
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, static_cast<int>(ConnectSocket));
 
-    // shutdown the connection since no more data will be sent
-    iResult = shutdown(ConnectSocket, SD_SEND);
-    if (iResult == SOCKET_ERROR) {
-        std::cerr << "shutdown failed with error: " << WSAGetLastError() << std::endl;
+    if (SSL_connect(ssl) <= 0) {
+        std::cerr << "TLS handshake failed." << std::endl;
+        ERR_print_errors_fp(stderr);
+        SSL_free(ssl);
+        SSL_CTX_free(ctx);
         closesocket(ConnectSocket);
         WSACleanup();
         return 1;
     }
 
-    // Receive until the peer closes the connection
-    do {
-        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
-        if ( iResult > 0 )
-            std::cout << "Bytes received: " << iResult << "\n";
-        else if ( iResult == 0 )
-            std::cout << "Connection closed" << "\n";
-        else
-            std::cerr << "recv failed with error: " << WSAGetLastError() << std::endl;
+    std::cout << "TLS connection established." << "\n";
 
-    } while( iResult > 0 );
-
-    // cleanup
+    int bytesRead = SSL_read(ssl, recvbuf, DEFAULT_BUFLEN);
+    if (bytesRead > 0) {
+        std::cout << "Bytes Received: " << bytesRead << "\n";
+    } else {
+        std::cerr << "SSL_read failed." << std::endl;
+        ERR_print_errors_fp(stderr);
+    }
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
     closesocket(ConnectSocket);
     WSACleanup();
 
