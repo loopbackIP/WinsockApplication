@@ -16,6 +16,7 @@
 #define DEFAULT_PORT "27015"
 
 int main() {
+    std::cout << "OpenSSL Version: " << OPENSSL_VERSION_TEXT << std::endl;
     WSADATA wsaData;
 
     int iSendResult;
@@ -38,8 +39,8 @@ int main() {
         return 1;
     }
 
-    if (SSL_CTX_use_certificate_file(ctx, "cert.pem", SSL_FILETYPE_PEM) <= 0 ||
-        SSL_CTX_use_PrivateKey_file(ctx, "key.pem", SSL_FILETYPE_PEM) <= 0) {
+    if (SSL_CTX_use_certificate_file(ctx, "C:/winsock Project/cert.pem", SSL_FILETYPE_PEM) <= 0 ||
+        SSL_CTX_use_PrivateKey_file(ctx, "C:/winsock Project/key.pem", SSL_FILETYPE_PEM) <= 0) {
         std::cerr << "Unable to load certificate and private key files\n";
         SSL_CTX_free(ctx);
     }
